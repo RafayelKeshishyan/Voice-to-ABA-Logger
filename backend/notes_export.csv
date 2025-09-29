@@ -1,0 +1,5 @@
+id,student_name,timestamp,antecedent,behavior,consequence
+4,Unknown,2025-09-28 20:53:06,,student,
+3,Unknown,2025-09-27 18:39:23,Before,,resulted in
+2,Bob,2025-09-27 18:33:22,Before recess,Student yelled,Sent outside
+1,Alex,2025-09-27 18:02:57,Doing homewokr,Agressive,NO play time
