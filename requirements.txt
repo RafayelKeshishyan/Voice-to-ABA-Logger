@@ -1,3 +1,8 @@
-fastapi==0.115.0
-uvicorn==0.30.0
-sqlalchemy==2.0.25
+fastapi
+uvicorn[standard]
+openai-whisper
+spacy
+pandas
+requests
+streamlit
+streamlit-audiorec

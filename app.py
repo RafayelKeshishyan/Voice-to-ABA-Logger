@@ -1,88 +1,129 @@
+# app.py
 import streamlit as st
 import requests
 import pandas as pd
 
-API_URL = "http://127.0.0.1:8000"   # Change later if backend is deployed
+API_URL = "http://localhost:8000"
 
-st.set_page_config(page_title="Voice-to-ABA Logger", layout="wide")
-st.title("🎙️ Voice-to-ABA Logger")
-st.write("Upload, record, or enter notes manually. Export all logs to CSV.")
+st.set_page_config(page_title="ABA Logger", layout="wide")
 
-# --- 1. Add Note Manually ---
-st.header("✍️ Add Note Manually")
-with st.form("manual_note"):
-    student_name = st.text_input("Student Name")
-    antecedent = st.text_input("Antecedent")
-    behavior = st.text_input("Behavior")
-    consequence = st.text_input("Consequence")
-    submitted = st.form_submit_button("Save Note")
+st.title("📘 ABA Logger Dashboard")
 
-    if submitted:
-        note = {
+# --- Backend API helpers ---
+def fetch_notes():
+    try:
+        res = requests.get(f"{API_URL}/notes/")
+        res.raise_for_status()
+        return res.json()["notes"]
+    except Exception as e:
+        st.error(f"Error fetching notes: {e}")
+        return []
+
+def delete_note(note_id):
+    requests.delete(f"{API_URL}/notes/{note_id}")
+
+def update_note(note_id, data):
+    requests.put(f"{API_URL}/notes/{note_id}", json=data)
+
+def add_note(data):
+    requests.post(f"{API_URL}/notes/", json=data)
+
+def export_notes():
+    res = requests.get(f"{API_URL}/export/")
+    if res.status_code == 200:
+        st.download_button(
+            label="⬇️ Download Exported CSV",
+            data=res.content,
+            file_name="notes_export.csv",
+            mime="text/csv"
+        )
+    else:
+        st.error(f"Export failed: {res.text}")
+
+def transcribe_audio(file, student_name="Unknown"):
+    files = {"file": (file.name, file, file.type)}
+    res = requests.post(f"{API_URL}/transcribe/", files=files, params={"student_name": student_name})
+    if res.status_code == 200:
+        data = res.json()
+        # Save into DB with student name
+        add_note({
             "student_name": student_name,
+            "antecedent": data.get("antecedent", ""),
+            "behavior": data.get("behavior", ""),
+            "consequence": data.get("consequence", ""),
+        })
+        return data
+    else:
+        st.error(f"Transcription failed: {res.text}")
+        return None
+
+# --- UI Sections ---
+
+# Add new note manually
+st.header("➕ Add a New Note")
+with st.form("add_note_form"):
+    student = st.text_input("Student Name")
+    antecedent = st.text_area("Antecedent")
+    behavior = st.text_area("Behavior")
+    consequence = st.text_area("Consequence")
+    # Removed timestamp input as DB handles it
+
+    if st.form_submit_button("Save"):
+        add_note({
+            "student_name": student,
             "antecedent": antecedent,
             "behavior": behavior,
             "consequence": consequence,
-        }
-        response = requests.post(f"{API_URL}/notes/", json=note)
-        if response.status_code == 200:
-            st.success("✅ Note added")
-        else:
-            st.error("❌ Failed to add note")
+        })
+        st.success("Note added successfully")
+        st.rerun()
 
-
-# --- 2. Transcribe Options ---
-st.header("🎤 Transcribe Audio")
-
-# Upload
+# Audio transcription
+st.header("🎙️ Upload Audio for Transcription")
+student_for_audio = st.text_input("Student Name (for audio note)", "Unknown")
 audio_file = st.file_uploader("Upload an audio file", type=["wav", "mp3", "m4a"])
 
-# Sample
-if st.button("Use Sample Recording"):
-    with open("examples/sample_audio.wav", "rb") as f:   # <-- put a sample file in ./examples/
-        files = {"file": ("sample_audio.wav", f, "audio/wav")}
-        response = requests.post(f"{API_URL}/transcribe/", files=files)
-        if response.status_code == 200:
-            data = response.json()
-            st.success("✅ Sample transcription complete!")
-            st.json(data)
-        else:
-            st.error(f"Error: {response.text}")
-
-# Upload transcription
-if audio_file is not None and st.button("Transcribe Uploaded File"):
-    files = {"file": (audio_file.name, audio_file, audio_file.type)}
-    response = requests.post(f"{API_URL}/transcribe/", files=files)
-    if response.status_code == 200:
-        data = response.json()
-        st.success("✅ Transcription complete!")
+if st.button("Transcribe & Save") and audio_file:
+    data = transcribe_audio(audio_file, student_for_audio)
+    if data:
+        st.success("Audio transcribed and saved as note")
         st.json(data)
-    else:
-        st.error(f"Error: {response.text}")
+        st.rerun()
 
+# Show notes
+st.header("📑 All Notes")
+notes = fetch_notes()
 
-# --- 3. Notes Table ---
-st.header("📋 Notes Database")
-if st.button("Refresh Notes"):
-    response = requests.get(f"{API_URL}/notes/")
-    if response.status_code == 200:
-        notes = response.json().get("notes", [])
-        if notes:
-            df = pd.DataFrame(notes)
-            st.dataframe(df)
-        else:
-            st.info("No notes found yet.")
-    else:
-        st.error("Failed to load notes.")
+if notes:
+    df = pd.DataFrame(notes)
+    st.dataframe(df, use_container_width=True)
 
+    for note in notes:
+        with st.expander(f"✏️ Edit Note {note['id']} - {note['student_name']}"):
+            new_student = st.text_input("Student", value=note["student_name"], key=f"s{note['id']}")
+            new_antecedent = st.text_area("Antecedent", value=note["antecedent"], key=f"a{note['id']}")
+            new_behavior = st.text_area("Behavior", value=note["behavior"], key=f"b{note['id']}")
+            new_consequence = st.text_area("Consequence", value=note["consequence"], key=f"c{note['id']}")
+            # Removed timestamp edit as DB handles it
 
-# --- 4. Export CSV ---
-st.header("⬇️ Export Data")
-if st.button("Download CSV"):
-    response = requests.get(f"{API_URL}/export/")
-    if response.status_code == 200:
-        with open("notes_export.csv", "wb") as f:
-            f.write(response.content)
-        st.success("✅ CSV exported! Check notes_export.csv")
-    else:
-        st.error("Export failed.")
+            col1, col2 = st.columns(2)
+            if col1.button("💾 Save Changes", key=f"save{note['id']}"):
+                update_note(note["id"], {
+                    "student_name": new_student,
+                    "antecedent": new_antecedent,
+                    "behavior": new_behavior,
+                    "consequence": new_consequence,
+                })
+                st.success(f"Note {note['id']} updated")
+                st.rerun()
+            if col2.button("🗑️ Delete Note", key=f"del{note['id']}"):
+                delete_note(note["id"])
+                st.warning(f"Note {note['id']} deleted")
+                st.rerun()
+
+else:
+    st.info("No notes yet. Add one above.")
+
+# Export CSV
+if st.button("⬇️ Export Notes as CSV"):
+    export_notes()
